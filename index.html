@@ -6,7 +6,7 @@
 <title>Relojería 00 · Contabilidad</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
 :root{
   --bg:#0E1013;
@@ -1194,7 +1194,14 @@ function renderBalance(){
     <div class="li-amount neg">${fmt(p.saldo)}</div></div>`).join('') : '<div class="empty-state">No hay saldos pendientes 🎉</div>';
 }
 function renderChart(canvasId, type, data, extraOptions){
-  const ctx = document.getElementById(canvasId).getContext('2d');
+  const canvas = document.getElementById(canvasId);
+  if(!canvas) return;
+  if(typeof Chart === 'undefined'){
+    const wrap = canvas.parentElement;
+    if(wrap) wrap.innerHTML = '<div class="empty-state">No se pudo cargar la librería de gráficas. Revisa tu conexión a internet y recarga la página.</div>';
+    return;
+  }
+  const ctx = canvas.getContext('2d');
   if(charts[canvasId]) charts[canvasId].destroy();
   charts[canvasId] = new Chart(ctx, { type, data, options: Object.assign({responsive:true, maintainAspectRatio:false}, extraOptions) });
 }
