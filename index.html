@@ -918,18 +918,37 @@ document.getElementById('saveInvBtn').addEventListener('click', async ()=>{
   const btn = document.getElementById('saveInvBtn');
   const editId = btn.dataset.editId;
   const payload = {categoria, marca, referencia, colorTalla, costo, cantidad, proveedor};
+  let cantidadIngresada = 0; // unidades nuevas que entran al inventario y que hay que descontar del balance
   btn.disabled = true; btn.textContent = 'Guardando…';
   try{
     if(editId){
-      await apiWrite('update','Inventario', editId, toSheetInv(payload));
       const item = DATA.inventario.find(x=>x.id===editId);
-      Object.assign(item, payload);
+      const cantidadPrevia = item ? (item.cantidad||0) : 0;
+      await apiWrite('update','Inventario', editId, toSheetInv(payload));
+      if(item) Object.assign(item, payload);
       delete btn.dataset.editId;
       document.getElementById('invFormTitle').textContent='Agregar producto';
+      if(cantidad > cantidadPrevia) cantidadIngresada = cantidad - cantidadPrevia;
     } else {
       const res = await apiWrite('add','Inventario', null, toSheetInv(payload));
       DATA.inventario.unshift({id:res.id, ...payload});
+      cantidadIngresada = cantidad;
     }
+
+    // Registra el costo de la mercancía que entra como un gasto, para que se descuente del balance (Utilidad)
+    if(cantidadIngresada > 0 && costo > 0){
+      const montoCompra = costo * cantidadIngresada;
+      const fechaCompra = todayISO();
+      const descCompra = `${marca?marca+' ':''}${referencia}${colorTalla?(' · '+colorTalla):''} · ${cantidadIngresada} unid.`;
+      try{
+        const resG = await apiWrite('add','Gastos', null, toSheetGasto({fecha:fechaCompra, tipo:'Compra de inventario', descripcion:descCompra, monto:montoCompra}));
+        DATA.gastos.unshift({id:resG.id, fecha:fechaCompra, timestamp:toTs(fechaCompra), tipo:'Compra de inventario', descripcion:descCompra, monto:montoCompra});
+      }catch(eG){
+        console.error(eG);
+        toast('Producto guardado, pero no se pudo registrar el gasto de la compra en Sheets: ' + eG.message);
+      }
+    }
+
     ['invCategoria','invMarca','invReferencia','invColorTalla','invCosto','invCantidad','invProveedor'].forEach(id=>document.getElementById(id).value='');
     toast('Producto guardado en Sheets ✓');
     syncInventoryDerived();
@@ -1204,8 +1223,14 @@ function renderBalance(){
   if(ROLE!=='administrador') return;
 
   const {start} = getPeriodRange();
+  const periodoActual = document.querySelector('.bperiod.active').dataset.p;
+  // Estos gastos se excluyen del balance diario y semanal (solo se ven reflejados en el balance mensual)
+  const GASTOS_EXCLUIDOS_DIA_SEMANA = ['Arriendo','Servicios','Pago proveedores','Pago empleados'];
   const ventasP = DATA.ventas.filter(v=>v.timestamp>=start.getTime());
-  const gastosP = DATA.gastos.filter(g=>g.timestamp>=start.getTime());
+  let gastosP = DATA.gastos.filter(g=>g.timestamp>=start.getTime());
+  if(periodoActual==='dia' || periodoActual==='semana'){
+    gastosP = gastosP.filter(g=>!GASTOS_EXCLUIDOS_DIA_SEMANA.includes(g.tipo));
+  }
   const totalVentas = ventasP.reduce((s,v)=>s+v.total,0);
   const totalGastos = gastosP.reduce((s,g)=>s+g.monto,0);
   document.getElementById('balVentas').textContent = fmt(totalVentas);
