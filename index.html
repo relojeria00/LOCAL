@@ -291,6 +291,8 @@ nav.bottomnav button.hidden-role{ display:none; }
 
         <div id="ventaItems"></div>
         <button class="btn btn-ghost btn-block" id="addItemBtn">+ Agregar otro producto</button>
+        <datalist id="dlProductos"></datalist>
+        <datalist id="dlReferencias"></datalist>
 
         <div class="total-banner">
           <span class="t-label">Total de la venta</span>
@@ -549,6 +551,7 @@ async function loadAll(quiet){
     setSyncStatus('sin conexión con Sheets', true);
     if(!quiet) toast('No se pudo conectar con Google Sheets. Revisa el despliegue del script.');
   }
+  refreshVentaDatalists();
   renderCurrentSection();
 }
 setInterval(()=>loadAll(true), 12000);
@@ -636,28 +639,62 @@ function renderCurrentSection(){
 /* =================================================================
    VENTAS
    ================================================================= */
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// Sugerencias de producto/referencia a partir del inventario (nunca obligatorias)
+function refreshVentaDatalists(){
+  const combos = new Set();
+  DATA.inventario.forEach(i=>{
+    const label = [i.marca, i.referencia].filter(Boolean).join(' ').trim();
+    if(label) combos.add(label);
+  });
+  const optionsHtml = Array.from(combos).map(v=>`<option value="${escapeHtml(v)}">`).join('');
+  const dlP = document.getElementById('dlProductos');
+  const dlR = document.getElementById('dlReferencias');
+  if(dlP) dlP.innerHTML = optionsHtml;
+  if(dlR) dlR.innerHTML = optionsHtml;
+}
+// Sugerencias de color/talla filtradas por lo que se ha escrito en producto/referencia de esa misma línea
+function updateColorSuggestions(block){
+  const q = ((block.querySelector('.vi-producto').value||'') + ' ' + (block.querySelector('.vi-referencia').value||'')).trim().toLowerCase();
+  const dl = block.querySelector('.vi-color-datalist');
+  if(!dl) return;
+  if(!q){ dl.innerHTML=''; return; }
+  const terms = q.split(/\s+/).filter(Boolean);
+  const matches = DATA.inventario.filter(i=>{
+    const hay = (i.marca+' '+i.referencia).toLowerCase();
+    return terms.some(t => hay.includes(t));
+  });
+  const colors = new Set(matches.map(i=>i.colorTalla).filter(Boolean));
+  dl.innerHTML = Array.from(colors).map(c=>`<option value="${escapeHtml(c)}">`).join('');
+}
 function addVentaItem(){
   ventaItemCount++;
   const id = 'vi_' + ventaItemCount;
+  const colorDlId = 'vi-color-dl_' + ventaItemCount;
   const wrap = document.createElement('div');
   wrap.className='item-block';
   wrap.id = id;
   wrap.innerHTML = `
     <button type="button" class="remove-item" onclick="document.getElementById('${id}').remove(); updateVentaTotal();">✕</button>
     <div class="field-row">
-      <div class="field"><label>Producto</label><input type="text" class="vi-producto" placeholder="Ej: Reloj análogo"></div>
-      <div class="field"><label>Referencia</label><input type="text" class="vi-referencia" placeholder="Referencia"></div>
+      <div class="field"><label>Producto</label><input type="text" class="vi-producto" list="dlProductos" placeholder="Ej: Casio, Reloj análogo…" autocomplete="off"></div>
+      <div class="field"><label>Referencia</label><input type="text" class="vi-referencia" list="dlReferencias" placeholder="Referencia" autocomplete="off"></div>
     </div>
     <div class="field-row3">
-      <div class="field"><label>Color</label><input type="text" class="vi-color" placeholder="Color"></div>
+      <div class="field"><label>Color</label><input type="text" class="vi-color" list="${colorDlId}" placeholder="Color" autocomplete="off"></div>
       <div class="field"><label>Precio unitario</label><input type="number" class="vi-precio" placeholder="0" inputmode="decimal"></div>
       <div class="field"><label>Cantidad</label><input type="number" class="vi-cantidad" placeholder="1" value="1" inputmode="numeric"></div>
     </div>
+    <datalist class="vi-color-datalist" id="${colorDlId}"></datalist>
     <div class="item-subtotal">Subtotal: <span class="vi-subtotal">$0</span></div>
   `;
   document.getElementById('ventaItems').appendChild(wrap);
   wrap.querySelectorAll('.vi-precio, .vi-cantidad').forEach(inp=>{
     inp.addEventListener('input', updateVentaTotal);
+  });
+  wrap.querySelectorAll('.vi-producto, .vi-referencia').forEach(inp=>{
+    inp.addEventListener('input', ()=>updateColorSuggestions(wrap));
   });
 }
 function updateVentaTotal(){
@@ -775,6 +812,7 @@ document.getElementById('saveInvBtn').addEventListener('click', async ()=>{
     }
     ['invCategoria','invMarca','invReferencia','invColorTalla','invCosto','invCantidad','invProveedor'].forEach(id=>document.getElementById(id).value='');
     toast('Producto guardado en Sheets ✓');
+    refreshVentaDatalists();
     renderInventario();
   }catch(e){
     toast('No se pudo guardar: ' + e.message);
@@ -828,6 +866,7 @@ async function deleteInv(id){
   try{
     await apiWrite('delete','Inventario', id);
     DATA.inventario = DATA.inventario.filter(x=>x.id!==id);
+    refreshVentaDatalists();
     renderInventario();
     toast('Producto eliminado de Sheets');
   }catch(e){ toast('No se pudo eliminar: ' + e.message); }
