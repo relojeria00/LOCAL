@@ -488,7 +488,7 @@ nav.bottomnav button.hidden-role{ display:none; }
    Backend: Google Apps Script + Google Sheets (doble vía)
    ================================================================= */
 
-const API_URL = 'https://script.google.com/macros/s/AKfycbz7p1g8Abg0BQ9HDg4ncehbAb2S41LB7YK584nIAxtH0199n1Dr0Bug6dDLUQSuHHoozQ/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycbzzzLKZBNJ3OZnlatc_vOkpGbHI3Ga5cF_HHCF6PgR8Xsyn2BB67DNCFbulxYPoh0B07w/exec';
 
 let ROLE = null; // 'empleado' | 'administrador'
 let DATA = { ventas: [], inventario: [], proveedores: [], abonos: [], gastos: [] };
@@ -498,9 +498,23 @@ let charts = {};
 let syncFailCount = 0;
 
 const fmt = (n) => '$' + Math.round(n||0).toLocaleString('es-CO');
-const todayISO = () => new Date().toISOString().slice(0,10);
+const todayISO = () => {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+};
 const normDate = (v) => v ? String(v).slice(0,10) : todayISO();
-const toTs = (dateStr) => { const t = Date.parse(dateStr); return isNaN(t) ? Date.now() : t; };
+const toTs = (dateStr) => {
+  const parts = String(dateStr||'').split('-');
+  if(parts.length === 3){
+    const d = new Date(+parts[0], (+parts[1])-1, +parts[2]);
+    if(!isNaN(d.getTime())) return d.getTime();
+  }
+  const t = Date.parse(dateStr);
+  return isNaN(t) ? Date.now() : t;
+};
 
 function toast(msg){
   const t = document.getElementById('toast');
@@ -744,6 +758,7 @@ document.getElementById('saveVentaBtn').addEventListener('click', async ()=>{
   if(blocks.length===0){ toast('Agrega al menos un producto'); return; }
   const items = [];
   const invUpdates = [];
+  const sinCoincidencia = [];
   for(const b of blocks){
     const producto = b.querySelector('.vi-producto').value.trim();
     const referencia = b.querySelector('.vi-referencia').value.trim();
@@ -752,8 +767,9 @@ document.getElementById('saveVentaBtn').addEventListener('click', async ()=>{
     const cantidad = parseFloat(b.querySelector('.vi-cantidad').value)||0;
     if(!producto || precio<=0 || cantidad<=0){ toast('Revisa los datos de cada producto'); return; }
     items.push({producto, referencia, color, precio, cantidad});
-    const match = DATA.inventario.find(x => x.referencia.toLowerCase()===referencia.toLowerCase() && (x.colorTalla||'').toLowerCase()===color.toLowerCase());
+    const match = DATA.inventario.find(x => x.referencia.trim().toLowerCase()===referencia.toLowerCase() && (x.colorTalla||'').trim().toLowerCase()===color.toLowerCase());
     if(match) invUpdates.push({match, cantidad});
+    else if(referencia) sinCoincidencia.push(referencia + (color?(' · '+color):''));
   }
   const total = items.reduce((s,i)=>s+i.precio*i.cantidad,0);
   const btn = document.getElementById('saveVentaBtn');
@@ -767,6 +783,9 @@ document.getElementById('saveVentaBtn').addEventListener('click', async ()=>{
       await apiWrite('update','Inventario', u.match.id, toSheetInv(u.match));
     }
     toast('Venta guardada en Sheets ✓');
+    if(sinCoincidencia.length){
+      setTimeout(()=>toast('⚠ No se descontó del stock (no coincide con inventario): ' + sinCoincidencia.join(', ')), 2800);
+    }
     document.getElementById('ventaVendedor').value='';
     document.getElementById('ventaItems').innerHTML='';
     ventaItemCount=0;
