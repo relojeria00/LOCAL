@@ -175,6 +175,21 @@ main{ max-width:920px; margin:0 auto; padding:20px 16px 40px; }
 .empty-state{ text-align:center; padding:40px 16px; color:var(--muted-2); }
 .empty-state .e-icon{ font-size:32px; margin-bottom:10px; opacity:0.5; }
 
+/* grupos de inventario por categoría */
+.inv-group{ margin-top:20px; }
+.inv-group:first-child{ margin-top:0; }
+.inv-group-header{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  padding:8px 2px; border-bottom:1px solid rgba(201,162,39,0.3); margin-bottom:2px;
+}
+.inv-group-name{ font-family:var(--font-display); font-weight:700; font-size:15px; color:var(--gold-soft); }
+.inv-group-count{ font-size:11.5px; color:var(--muted); font-family:var(--font-mono); flex-shrink:0; }
+
+/* selección de producto desde inventario en Ventas */
+.vi-manual-toggle{ display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--muted); margin:-4px 0 12px; cursor:pointer; }
+.vi-manual-toggle input{ width:auto; accent-color:var(--gold); }
+.vi-stock-hint{ display:block; color:var(--muted); font-size:12px; margin-bottom:2px; }
+
 /* filter pills */
 .pill-row{ display:flex; gap:8px; margin-bottom:18px; overflow-x:auto; padding-bottom:2px; }
 .pill{ flex-shrink:0; padding:8px 16px; border-radius:20px; border:1px solid var(--line); background:var(--card); font-size:13px; color:var(--muted); }
@@ -299,8 +314,6 @@ nav.bottomnav button.hidden-role{ display:none; }
 
         <div id="ventaItems"></div>
         <button class="btn btn-ghost btn-block" id="addItemBtn">+ Agregar otro producto</button>
-        <datalist id="dlProductos"></datalist>
-        <datalist id="dlReferencias"></datalist>
 
         <div class="total-banner">
           <span class="t-label">Total de la venta</span>
@@ -323,9 +336,10 @@ nav.bottomnav button.hidden-role{ display:none; }
       <div class="card">
         <div class="card-title" id="invFormTitle">Agregar producto</div>
         <div class="field-row">
-          <div class="field"><label>Categoría</label><input type="text" id="invCategoria" placeholder="Reloj, correa, pila…"></div>
+          <div class="field"><label>Categoría</label><input type="text" id="invCategoria" placeholder="Reloj, correa, pila…" list="dlCategorias"></div>
           <div class="field"><label>Marca</label><input type="text" id="invMarca" placeholder="Marca"></div>
         </div>
+        <datalist id="dlCategorias"></datalist>
         <div class="field-row">
           <div class="field"><label>Nombre / referencia</label><input type="text" id="invReferencia" placeholder="Referencia"></div>
           <div class="field"><label>Color o talla</label><input type="text" id="invColorTalla" placeholder="Color / talla"></div>
@@ -591,7 +605,8 @@ async function loadAll(quiet){
     setSyncStatus('sin conexión con Sheets', true);
     if(!quiet) toast('No se pudo conectar con Google Sheets. Revisa el despliegue del script.');
   }
-  refreshVentaDatalists();
+  refreshVentaInventorySelects();
+  refreshCategoriaDatalist();
   renderCurrentSection();
 }
 setInterval(()=>loadAll(true), 12000);
@@ -681,60 +696,106 @@ function renderCurrentSection(){
    ================================================================= */
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
-// Sugerencias de producto/referencia a partir del inventario (nunca obligatorias)
-function refreshVentaDatalists(){
-  const combos = new Set();
-  DATA.inventario.forEach(i=>{
-    const label = [i.marca, i.referencia].filter(Boolean).join(' ').trim();
-    if(label) combos.add(label);
+// Agrupa el inventario por categoría (usado en Ventas y en la vista de Inventario)
+function inventarioAgrupado(items){
+  const groups = {};
+  (items||DATA.inventario).forEach(i=>{
+    const cat = (i.categoria||'').trim() || 'Sin categoría';
+    if(!groups[cat]) groups[cat] = [];
+    groups[cat].push(i);
   });
-  const optionsHtml = Array.from(combos).map(v=>`<option value="${escapeHtml(v)}">`).join('');
-  const dlP = document.getElementById('dlProductos');
-  const dlR = document.getElementById('dlReferencias');
-  if(dlP) dlP.innerHTML = optionsHtml;
-  if(dlR) dlR.innerHTML = optionsHtml;
+  return groups;
 }
-// Sugerencias de color/talla filtradas por lo que se ha escrito en producto/referencia de esa misma línea
-function updateColorSuggestions(block){
-  const q = ((block.querySelector('.vi-producto').value||'') + ' ' + (block.querySelector('.vi-referencia').value||'')).trim().toLowerCase();
-  const dl = block.querySelector('.vi-color-datalist');
-  if(!dl) return;
-  if(!q){ dl.innerHTML=''; return; }
-  const terms = q.split(/\s+/).filter(Boolean);
-  const matches = DATA.inventario.filter(i=>{
-    const hay = (i.marca+' '+i.referencia).toLowerCase();
-    return terms.some(t => hay.includes(t));
+// Construye las opciones <optgroup>/<option> del selector de producto en Ventas, a partir del inventario real
+function buildInvSelectOptions(selectedId){
+  const groups = inventarioAgrupado();
+  const catNames = Object.keys(groups).sort((a,b)=>a.localeCompare(b,'es'));
+  let html = `<option value="">— Selecciona un producto del inventario —</option>`;
+  catNames.forEach(cat=>{
+    html += `<optgroup label="${escapeHtml(cat)}">`;
+    groups[cat].slice().sort((a,b)=>((a.marca||'')+a.referencia).localeCompare((b.marca||'')+b.referencia,'es')).forEach(i=>{
+      const label = `${i.marca?i.marca+' ':''}${i.referencia}${i.colorTalla?(' · '+i.colorTalla):''} — Stock: ${i.cantidad}`;
+      const sel = String(i.id)===String(selectedId) ? ' selected' : '';
+      html += `<option value="${i.id}"${sel}>${escapeHtml(label)}</option>`;
+    });
+    html += `</optgroup>`;
   });
-  const colors = new Set(matches.map(i=>i.colorTalla).filter(Boolean));
-  dl.innerHTML = Array.from(colors).map(c=>`<option value="${escapeHtml(c)}">`).join('');
+  return html;
+}
+// Refresca todos los selectores de producto ya agregados a la venta actual, conservando su selección si sigue existiendo
+function refreshVentaInventorySelects(){
+  document.querySelectorAll('#ventaItems .vi-inv-select').forEach(sel=>{
+    const current = sel.value;
+    sel.innerHTML = buildInvSelectOptions(current);
+  });
+}
+// Refresca las sugerencias de categoría del formulario de Inventario
+function refreshCategoriaDatalist(){
+  const dl = document.getElementById('dlCategorias');
+  if(!dl) return;
+  const cats = new Set(DATA.inventario.map(i=>(i.categoria||'').trim()).filter(Boolean));
+  dl.innerHTML = Array.from(cats).map(c=>`<option value="${escapeHtml(c)}">`).join('');
+}
+function syncInventoryDerived(){
+  refreshVentaInventorySelects();
+  refreshCategoriaDatalist();
+}
+function updateStockHint(wrap){
+  const sel = wrap.querySelector('.vi-inv-select');
+  const hint = wrap.querySelector('.vi-stock-hint');
+  if(!sel || sel.parentElement.style.display==='none' || !sel.value){ hint.textContent=''; return; }
+  const item = DATA.inventario.find(x=>String(x.id)===String(sel.value));
+  if(!item){ hint.textContent=''; return; }
+  const cantidad = parseFloat(wrap.querySelector('.vi-cantidad').value)||0;
+  const excede = cantidad > item.cantidad;
+  hint.innerHTML = `Stock disponible: ${item.cantidad}` + (excede ? ' <span style="color:var(--red)">· la cantidad supera el stock</span>' : '');
 }
 function addVentaItem(){
   ventaItemCount++;
   const id = 'vi_' + ventaItemCount;
-  const colorDlId = 'vi-color-dl_' + ventaItemCount;
   const wrap = document.createElement('div');
   wrap.className='item-block';
   wrap.id = id;
   wrap.innerHTML = `
     <button type="button" class="remove-item" onclick="document.getElementById('${id}').remove(); updateVentaTotal();">✕</button>
-    <div class="field-row">
-      <div class="field"><label>Producto</label><input type="text" class="vi-producto" list="dlProductos" placeholder="Ej: Casio, Reloj análogo…" autocomplete="off"></div>
-      <div class="field"><label>Referencia</label><input type="text" class="vi-referencia" list="dlReferencias" placeholder="Referencia" autocomplete="off"></div>
+    <div class="field">
+      <label>Producto</label>
+      <select class="vi-inv-select">${buildInvSelectOptions('')}</select>
+    </div>
+    <label class="vi-manual-toggle">
+      <input type="checkbox" class="vi-manual-check"> No está en el inventario, escribir manualmente
+    </label>
+    <div class="field-row vi-manual-fields" style="display:none;">
+      <div class="field"><label>Producto</label><input type="text" class="vi-producto" placeholder="Ej: Casio, Reloj análogo…" autocomplete="off"></div>
+      <div class="field"><label>Referencia</label><input type="text" class="vi-referencia" placeholder="Referencia (opcional)" autocomplete="off"></div>
     </div>
     <div class="field-row3">
-      <div class="field"><label>Color</label><input type="text" class="vi-color" list="${colorDlId}" placeholder="Color" autocomplete="off"></div>
+      <div class="field vi-manual-fields" style="display:none;"><label>Color</label><input type="text" class="vi-color" placeholder="Color" autocomplete="off"></div>
       <div class="field"><label>Precio unitario</label><input type="number" class="vi-precio" placeholder="0" inputmode="decimal"></div>
       <div class="field"><label>Cantidad</label><input type="number" class="vi-cantidad" placeholder="1" value="1" inputmode="numeric"></div>
     </div>
-    <datalist class="vi-color-datalist" id="${colorDlId}"></datalist>
+    <span class="vi-stock-hint"></span>
     <div class="item-subtotal">Subtotal: <span class="vi-subtotal">$0</span></div>
   `;
   document.getElementById('ventaItems').appendChild(wrap);
   wrap.querySelectorAll('.vi-precio, .vi-cantidad').forEach(inp=>{
-    inp.addEventListener('input', updateVentaTotal);
+    inp.addEventListener('input', ()=>{ updateVentaTotal(); updateStockHint(wrap); });
   });
-  wrap.querySelectorAll('.vi-producto, .vi-referencia').forEach(inp=>{
-    inp.addEventListener('input', ()=>updateColorSuggestions(wrap));
+  const sel = wrap.querySelector('.vi-inv-select');
+  sel.addEventListener('change', ()=>updateStockHint(wrap));
+  const check = wrap.querySelector('.vi-manual-check');
+  check.addEventListener('change', ()=>{
+    const manualFields = wrap.querySelectorAll('.vi-manual-fields');
+    const selectWrap = sel.parentElement;
+    if(check.checked){
+      manualFields.forEach(f=>f.style.display='');
+      selectWrap.style.display='none';
+      sel.value='';
+      wrap.querySelector('.vi-stock-hint').textContent='';
+    } else {
+      manualFields.forEach(f=>f.style.display='none');
+      selectWrap.style.display='';
+    }
   });
 }
 function updateVentaTotal(){
@@ -758,18 +819,30 @@ document.getElementById('saveVentaBtn').addEventListener('click', async ()=>{
   if(blocks.length===0){ toast('Agrega al menos un producto'); return; }
   const items = [];
   const invUpdates = [];
-  const sinCoincidencia = [];
+  const excedeStock = [];
   for(const b of blocks){
-    const producto = b.querySelector('.vi-producto').value.trim();
-    const referencia = b.querySelector('.vi-referencia').value.trim();
-    const color = b.querySelector('.vi-color').value.trim();
+    const manual = b.querySelector('.vi-manual-check').checked;
     const precio = parseFloat(b.querySelector('.vi-precio').value)||0;
     const cantidad = parseFloat(b.querySelector('.vi-cantidad').value)||0;
+    let producto, referencia, color, invItem = null;
+    if(manual){
+      producto = b.querySelector('.vi-producto').value.trim();
+      referencia = b.querySelector('.vi-referencia').value.trim();
+      color = b.querySelector('.vi-color').value.trim();
+    } else {
+      const selId = b.querySelector('.vi-inv-select').value;
+      invItem = DATA.inventario.find(x=>String(x.id)===String(selId));
+      if(!invItem){ toast('Selecciona un producto del inventario o marca "no está en el inventario"'); return; }
+      producto = [invItem.marca, invItem.referencia].filter(Boolean).join(' ').trim();
+      referencia = invItem.referencia;
+      color = invItem.colorTalla || '';
+    }
     if(!producto || precio<=0 || cantidad<=0){ toast('Revisa los datos de cada producto'); return; }
     items.push({producto, referencia, color, precio, cantidad});
-    const match = DATA.inventario.find(x => x.referencia.trim().toLowerCase()===referencia.toLowerCase() && (x.colorTalla||'').trim().toLowerCase()===color.toLowerCase());
-    if(match) invUpdates.push({match, cantidad});
-    else if(referencia) sinCoincidencia.push(referencia + (color?(' · '+color):''));
+    if(invItem){
+      invUpdates.push({match: invItem, cantidad});
+      if(cantidad > invItem.cantidad) excedeStock.push(referencia + (color?(' · '+color):''));
+    }
   }
   const total = items.reduce((s,i)=>s+i.precio*i.cantidad,0);
   const btn = document.getElementById('saveVentaBtn');
@@ -783,8 +856,8 @@ document.getElementById('saveVentaBtn').addEventListener('click', async ()=>{
       await apiWrite('update','Inventario', u.match.id, toSheetInv(u.match));
     }
     toast('Venta guardada en Sheets ✓');
-    if(sinCoincidencia.length){
-      setTimeout(()=>toast('⚠ No se descontó del stock (no coincide con inventario): ' + sinCoincidencia.join(', ')), 2800);
+    if(excedeStock.length){
+      setTimeout(()=>toast('⚠ Vendiste más unidades de las que había en stock: ' + excedeStock.join(', ')), 2800);
     }
     document.getElementById('ventaVendedor').value='';
     document.getElementById('ventaItems').innerHTML='';
@@ -792,6 +865,8 @@ document.getElementById('saveVentaBtn').addEventListener('click', async ()=>{
     addVentaItem();
     updateVentaTotal();
     renderVentas();
+    syncInventoryDerived();
+    renderInventario();
   }catch(e){
     console.error(e);
     toast('No se pudo guardar en Sheets: ' + e.message);
@@ -857,7 +932,7 @@ document.getElementById('saveInvBtn').addEventListener('click', async ()=>{
     }
     ['invCategoria','invMarca','invReferencia','invColorTalla','invCosto','invCantidad','invProveedor'].forEach(id=>document.getElementById(id).value='');
     toast('Producto guardado en Sheets ✓');
-    refreshVentaDatalists();
+    syncInventoryDerived();
     renderInventario();
   }catch(e){
     toast('No se pudo guardar: ' + e.message);
@@ -874,21 +949,35 @@ function renderInventario(){
   if(q) items = items.filter(i => (i.referencia+i.marca+i.categoria).toLowerCase().includes(q));
   document.getElementById('invCount').textContent = `· ${DATA.inventario.length} referencias`;
   if(items.length===0){ list.innerHTML = '<div class="empty-state"><div class="e-icon">📦</div>No hay productos que coincidan.</div>'; return; }
-  list.innerHTML = items.map(i=>{
-    const low = i.cantidad <= 2;
-    return `<div class="list-item">
-      <div>
-        <div class="li-main">${i.referencia}${i.colorTalla?(' · '+i.colorTalla):''}</div>
-        <div class="li-sub">${i.marca||'—'} · ${i.categoria||'—'} · ${i.proveedor||'sin proveedor'}</div>
-        <div class="li-tag" style="${low?'color:var(--red)':''}">Stock: ${i.cantidad} ${low?'· bajo':''}</div>
-      </div>
-      <div class="li-right">
-        <div class="li-amount">${fmt(i.costo)}</div>
-        <div class="li-actions">
-          <button class="icon-btn" onclick="editInv('${i.id}')">Editar</button>
-          <button class="icon-btn" onclick="deleteInv('${i.id}')">Eliminar</button>
+
+  const groups = inventarioAgrupado(items);
+  const catNames = Object.keys(groups).sort((a,b)=>a.localeCompare(b,'es'));
+  list.innerHTML = catNames.map(cat=>{
+    const catItems = groups[cat].slice().sort((a,b)=>((a.marca||'')+a.referencia).localeCompare((b.marca||'')+b.referencia,'es'));
+    const totalStock = catItems.reduce((s,i)=>s+(i.cantidad||0),0);
+    const rows = catItems.map(i=>{
+      const low = i.cantidad <= 2;
+      return `<div class="list-item">
+        <div>
+          <div class="li-main">${i.referencia}${i.colorTalla?(' · '+i.colorTalla):''}</div>
+          <div class="li-sub">${i.marca||'—'} · ${i.proveedor||'sin proveedor'}</div>
+          <div class="li-tag" style="${low?'color:var(--red)':''}">Stock: ${i.cantidad} ${low?'· bajo':''}</div>
         </div>
+        <div class="li-right">
+          <div class="li-amount">${fmt(i.costo)}</div>
+          <div class="li-actions">
+            <button class="icon-btn" onclick="editInv('${i.id}')">Editar</button>
+            <button class="icon-btn" onclick="deleteInv('${i.id}')">Eliminar</button>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+    return `<div class="inv-group">
+      <div class="inv-group-header">
+        <span class="inv-group-name">${escapeHtml(cat)}</span>
+        <span class="inv-group-count">${catItems.length} referencia(s) · ${totalStock} en stock</span>
       </div>
+      ${rows}
     </div>`;
   }).join('');
 }
@@ -911,7 +1000,7 @@ async function deleteInv(id){
   try{
     await apiWrite('delete','Inventario', id);
     DATA.inventario = DATA.inventario.filter(x=>x.id!==id);
-    refreshVentaDatalists();
+    syncInventoryDerived();
     renderInventario();
     toast('Producto eliminado de Sheets');
   }catch(e){ toast('No se pudo eliminar: ' + e.message); }
