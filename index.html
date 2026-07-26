@@ -218,6 +218,14 @@ nav.bottomnav button.hidden-role{ display:none; }
 .locked-note{ text-align:center; padding:60px 20px; color:var(--muted); }
 .locked-note .l-ic{ font-size:34px; margin-bottom:14px; }
 
+/* inline abono row (dentro de Proveedores) */
+.abono-row{ display:none; gap:8px; margin-top:10px; padding-top:10px; border-top:1px dashed var(--line); }
+.abono-row.open{ display:flex; }
+.abono-row input{ flex:1; background:var(--card-2); border:1px solid var(--line); color:var(--text); padding:9px 10px; border-radius:8px; font-size:13.5px; }
+.abono-row button{ flex-shrink:0; }
+.prov-item{ flex-direction:column; align-items:stretch; }
+.prov-item .prov-top{ display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
+
 @media(min-width:720px){
   .field-row3{ grid-template-columns:repeat(4,1fr); }
 }
@@ -437,8 +445,26 @@ nav.bottomnav button.hidden-role{ display:none; }
         </div>
 
         <div class="card">
+          <div class="card-title">Ventas por día de la semana</div>
+          <div class="page-sub" style="margin-bottom:10px;">Histórico completo · para ver qué día vende más.</div>
+          <div class="chart-wrap small"><canvas id="chartDiaSemana"></canvas></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Ventas por mes del año</div>
+          <div class="page-sub" style="margin-bottom:10px;">Histórico completo · para ver qué mes vende más.</div>
+          <div class="chart-wrap small"><canvas id="chartMesAno"></canvas></div>
+        </div>
+
+        <div class="card">
           <div class="card-title">Saldos pendientes con proveedores</div>
           <div id="balProveedores"><div class="empty-state">Sin datos</div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Hojas de Google Sheets</div>
+          <div class="page-sub" style="margin-bottom:10px;">Los encabezados de cada hoja se verifican y completan automáticamente cada vez que la app sincroniza. Usa este botón solo si quieres forzar la revisión ahora.</div>
+          <button class="btn btn-ghost btn-block" id="repairHeadersBtn">Verificar / reparar encabezados ahora</button>
         </div>
       </div>
     </section>
@@ -899,25 +925,46 @@ function renderProveedores(){
   list.innerHTML = DATA.proveedores.map(p=>{
     const abonosProv = DATA.abonos.filter(a=>a.proveedorId===p.id);
     const abonado = abonosProv.reduce((s,a)=>s+a.monto,0);
-    return `<div class="list-item">
-      <div>
-        <div class="li-main">${p.nombre}</div>
-        <div class="li-sub">Factura ${p.factura||'—'} · Abonado: ${fmt(abonado)}</div>
-        <div class="li-tag">${abonosProv.length} abono(s)</div>
-      </div>
-      <div class="li-right">
-        <div class="li-amount ${p.saldo>0?'neg':'pos'}">${fmt(p.saldo)}</div>
-        <div class="li-actions">
-          <button class="icon-btn" onclick="promptAbono('${p.id}')">Abonar</button>
-          <button class="icon-btn" onclick="deleteProv('${p.id}')">Eliminar</button>
+    return `<div class="list-item prov-item" id="prov-item-${p.id}">
+      <div class="prov-top">
+        <div>
+          <div class="li-main">${p.nombre}</div>
+          <div class="li-sub">Factura ${p.factura||'—'} · Abonado: ${fmt(abonado)}</div>
+          <div class="li-tag">${abonosProv.length} abono(s)</div>
         </div>
+        <div class="li-right">
+          <div class="li-amount ${p.saldo>0?'neg':'pos'}">${fmt(p.saldo)}</div>
+          <div class="li-actions">
+            <button class="icon-btn" onclick="toggleAbono('${p.id}')">Abonar</button>
+            <button class="icon-btn" onclick="deleteProv('${p.id}')">Eliminar</button>
+          </div>
+        </div>
+      </div>
+      <div class="abono-row" id="abono-row-${p.id}">
+        <input type="number" inputmode="decimal" placeholder="Monto a abonar" id="abono-input-${p.id}">
+        <button class="btn btn-primary btn-sm" onclick="submitAbono('${p.id}')">Confirmar</button>
+        <button class="btn btn-ghost btn-sm" onclick="toggleAbono('${p.id}')">Cancelar</button>
       </div>
     </div>`;
   }).join('');
 }
-async function promptAbono(id){
-  const monto = parseFloat(prompt('Monto del abono:'));
-  if(!monto || monto<=0) return;
+function toggleAbono(id){
+  // cierra cualquier otro abono abierto y alterna el de este proveedor, todo dentro de la misma tarjeta de Proveedores
+  document.querySelectorAll('.abono-row').forEach(row=>{
+    if(row.id !== 'abono-row-'+id) row.classList.remove('open');
+  });
+  const row = document.getElementById('abono-row-'+id);
+  if(!row) return;
+  row.classList.toggle('open');
+  if(row.classList.contains('open')){
+    const inp = document.getElementById('abono-input-'+id);
+    inp.value=''; inp.focus();
+  }
+}
+async function submitAbono(id){
+  const inp = document.getElementById('abono-input-'+id);
+  const monto = parseFloat(inp.value);
+  if(!monto || monto<=0){ toast('Escribe un monto válido'); return; }
   const p = DATA.proveedores.find(x=>x.id===id);
   if(!p) return;
   try{
@@ -1011,6 +1058,22 @@ async function deleteGasto(id){
 /* =================================================================
    BALANCE
    ================================================================= */
+const repairBtn = document.getElementById('repairHeadersBtn');
+if(repairBtn){
+  repairBtn.addEventListener('click', async ()=>{
+    repairBtn.disabled = true; repairBtn.textContent = 'Verificando…';
+    try{
+      await apiWrite('ensureHeaders', null, null, null);
+      toast('Encabezados verificados y sincronizados ✓');
+      loadAll(true);
+    }catch(e){
+      toast('No se pudo verificar: ' + e.message);
+    }finally{
+      repairBtn.disabled = false; repairBtn.textContent = 'Verificar / reparar encabezados ahora';
+    }
+  });
+}
+
 document.querySelectorAll('.bperiod').forEach(btn=>{
   btn.addEventListener('click', ()=>{
     document.querySelectorAll('.bperiod').forEach(b=>b.classList.remove('active'));
@@ -1080,6 +1143,30 @@ function renderBalance(){
       {label:'Gastos', data:gArr, backgroundColor:'#D2564C', borderRadius:5}
     ]
   },{plugins:{legend:{position:'bottom', labels:{color:'#9198A3', font:{size:11}}}}, scales:{x:{ticks:{color:'#5C636F', font:{size:10}}, grid:{display:false}}, y:{ticks:{color:'#5C636F', font:{size:10}}, grid:{color:'#2B303A'}}}});
+
+  const DIAS = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
+  const dateFromISO = (str)=>{ const p=String(str).split('-'); return new Date(+p[0], (+p[1])-1, +p[2]); };
+  const ventasPorDiaSemana = new Array(7).fill(0);
+  DATA.ventas.forEach(v=>{
+    const d = dateFromISO(v.fecha);
+    const idx = (d.getDay()+6)%7; // 0=Lunes ... 6=Domingo
+    ventasPorDiaSemana[idx] += v.total;
+  });
+  renderChart('chartDiaSemana','bar',{
+    labels: DIAS,
+    datasets:[{data: ventasPorDiaSemana, backgroundColor:'#C9A227', borderRadius:6}]
+  },{plugins:{legend:{display:false}}, scales:{x:{ticks:{color:'#9198A3', font:{size:10.5}}, grid:{display:false}}, y:{ticks:{color:'#5C636F', font:{size:10}}, grid:{color:'#2B303A'}}}});
+
+  const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const ventasPorMes = new Array(12).fill(0);
+  DATA.ventas.forEach(v=>{
+    const d = dateFromISO(v.fecha);
+    ventasPorMes[d.getMonth()] += v.total;
+  });
+  renderChart('chartMesAno','bar',{
+    labels: MESES.map(m=>m.slice(0,3)),
+    datasets:[{data: ventasPorMes, backgroundColor:'#2E9C82', borderRadius:6}]
+  },{plugins:{legend:{display:false}}, scales:{x:{ticks:{color:'#9198A3', font:{size:10.5}}, grid:{display:false}}, y:{ticks:{color:'#5C636F', font:{size:10}}, grid:{color:'#2B303A'}}}});
 
   const conSaldo = DATA.proveedores.filter(p=>p.saldo>0);
   const bp = document.getElementById('balProveedores');
