@@ -845,6 +845,8 @@ document.getElementById('saveVentaBtn').addEventListener('click', async ()=>{
     }
   }
   const total = items.reduce((s,i)=>s+i.precio*i.cantidad,0);
+  // Costo de la mercancía vendida (solo para los productos que vienen del inventario, donde sabemos el costo real)
+  const costoVenta = invUpdates.reduce((s,u)=> s + (u.match.costo||0) * u.cantidad, 0);
   const btn = document.getElementById('saveVentaBtn');
   btn.disabled = true; btn.textContent = 'Guardando…';
   try{
@@ -854,6 +856,17 @@ document.getElementById('saveVentaBtn').addEventListener('click', async ()=>{
     for(const u of invUpdates){
       u.match.cantidad = Math.max(0, (u.match.cantidad||0) - u.cantidad);
       await apiWrite('update','Inventario', u.match.id, toSheetInv(u.match));
+    }
+    // Registra el costo de la mercancía vendida como gasto del mismo día, para que se descuente del balance junto con esa venta
+    if(costoVenta > 0){
+      const descCosto = `Costo de mercancía vendida a ${vendedor}`;
+      try{
+        const resG = await apiWrite('add','Gastos', null, toSheetGasto({fecha, tipo:'Costo de mercancía vendida', descripcion:descCosto, monto:costoVenta}));
+        DATA.gastos.unshift({id:resG.id, fecha, timestamp:toTs(fecha), tipo:'Costo de mercancía vendida', descripcion:descCosto, monto:costoVenta});
+      }catch(eG){
+        console.error(eG);
+        toast('Venta guardada, pero no se pudo registrar el costo de la mercancía en Sheets: ' + eG.message);
+      }
     }
     toast('Venta guardada en Sheets ✓');
     if(excedeStock.length){
@@ -918,37 +931,18 @@ document.getElementById('saveInvBtn').addEventListener('click', async ()=>{
   const btn = document.getElementById('saveInvBtn');
   const editId = btn.dataset.editId;
   const payload = {categoria, marca, referencia, colorTalla, costo, cantidad, proveedor};
-  let cantidadIngresada = 0; // unidades nuevas que entran al inventario y que hay que descontar del balance
   btn.disabled = true; btn.textContent = 'Guardando…';
   try{
     if(editId){
-      const item = DATA.inventario.find(x=>x.id===editId);
-      const cantidadPrevia = item ? (item.cantidad||0) : 0;
       await apiWrite('update','Inventario', editId, toSheetInv(payload));
-      if(item) Object.assign(item, payload);
+      const item = DATA.inventario.find(x=>x.id===editId);
+      Object.assign(item, payload);
       delete btn.dataset.editId;
       document.getElementById('invFormTitle').textContent='Agregar producto';
-      if(cantidad > cantidadPrevia) cantidadIngresada = cantidad - cantidadPrevia;
     } else {
       const res = await apiWrite('add','Inventario', null, toSheetInv(payload));
       DATA.inventario.unshift({id:res.id, ...payload});
-      cantidadIngresada = cantidad;
     }
-
-    // Registra el costo de la mercancía que entra como un gasto, para que se descuente del balance (Utilidad)
-    if(cantidadIngresada > 0 && costo > 0){
-      const montoCompra = costo * cantidadIngresada;
-      const fechaCompra = todayISO();
-      const descCompra = `${marca?marca+' ':''}${referencia}${colorTalla?(' · '+colorTalla):''} · ${cantidadIngresada} unid.`;
-      try{
-        const resG = await apiWrite('add','Gastos', null, toSheetGasto({fecha:fechaCompra, tipo:'Compra de inventario', descripcion:descCompra, monto:montoCompra}));
-        DATA.gastos.unshift({id:resG.id, fecha:fechaCompra, timestamp:toTs(fechaCompra), tipo:'Compra de inventario', descripcion:descCompra, monto:montoCompra});
-      }catch(eG){
-        console.error(eG);
-        toast('Producto guardado, pero no se pudo registrar el gasto de la compra en Sheets: ' + eG.message);
-      }
-    }
-
     ['invCategoria','invMarca','invReferencia','invColorTalla','invCosto','invCantidad','invProveedor'].forEach(id=>document.getElementById(id).value='');
     toast('Producto guardado en Sheets ✓');
     syncInventoryDerived();
